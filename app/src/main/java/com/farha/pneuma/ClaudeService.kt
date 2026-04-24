@@ -10,14 +10,13 @@ import java.net.URL
 
 object ClaudeService {
 
-    // Drop your key here before the demo. Do NOT commit the real key.
-    private const val API_KEY = "REPLACE_WITH_CLAUDE_API_KEY"
-
-    private const val ENDPOINT = "https://api.anthropic.com/v1/messages"
+    // Do NOT commit this key.
+    private const val API_KEY = "ipsjLFFJ01KTbRdd3QTCZXtAoKkgOcJC"
+    private const val ENDPOINT = "https://api.mistral.ai/v1/chat/completions"
 
     private const val SYSTEM_PROMPT = """You are a clinical documentation assistant. Given patient vitals, a voice intake transcript, and a visual symptom description, output ONLY a valid JSON object with no markdown fences and no extra text:
 {"subjective":"<what patient said, 1-2 sentences>","objective":"Heart Rate: <x> bpm\nAge/Sex: <x> / <x>\nVisual: <visual description>","assessment":{"urgency":"High Risk|Moderate Risk|Low Risk","narrative":"<1 sentence clinical summary>","flags":["<flag1>","<flag2>"]},"plan":["<step1>","<step2>"]}
-Rules: urgency must be exactly "High Risk", "Moderate Risk", or "Low Risk". Keep objective formatted with literal \n between each line. Be concise and clinical."""
+Rules: urgency must be exactly "High Risk", "Moderate Risk", or "Low Risk". Format objective with literal \n between each line. Be concise and clinical."""
 
     suspend fun generateSoapNote(
         heartRate: Int,
@@ -34,10 +33,13 @@ Rules: urgency must be exactly "High Risk", "Moderate Risk", or "Low Risk". Keep
         }
 
         val requestBody = JSONObject().apply {
-            put("model", "claude-haiku-4-5-20251001")
-            put("max_tokens", 1024)
-            put("system", SYSTEM_PROMPT)
+            put("model", "mistral-small-latest")
+            put("temperature", 0.2)
             put("messages", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("role", "system")
+                    put("content", SYSTEM_PROMPT)
+                })
                 put(JSONObject().apply {
                     put("role", "user")
                     put("content", userContent)
@@ -47,9 +49,8 @@ Rules: urgency must be exactly "High Risk", "Moderate Risk", or "Low Risk". Keep
 
         val conn = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
-            setRequestProperty("x-api-key", API_KEY)
-            setRequestProperty("anthropic-version", "2023-06-01")
-            setRequestProperty("content-type", "application/json")
+            setRequestProperty("Authorization", "Bearer $API_KEY")
+            setRequestProperty("Content-Type", "application/json")
             doOutput = true
             connectTimeout = 30_000
             readTimeout = 30_000
@@ -66,9 +67,10 @@ Rules: urgency must be exactly "High Risk", "Moderate Risk", or "Low Risk". Keep
 
     private fun parseResponse(raw: String): SoapNote {
         val contentText = JSONObject(raw)
-            .getJSONArray("content")
+            .getJSONArray("choices")
             .getJSONObject(0)
-            .getString("text")
+            .getJSONObject("message")
+            .getString("content")
             .trim()
             .removePrefix("```json")
             .removePrefix("```")
