@@ -15,11 +15,9 @@ object ClaudeService {
 
     private const val ENDPOINT = "https://api.anthropic.com/v1/messages"
 
-    private const val SYSTEM_PROMPT = """You are a clinical documentation assistant. \
-Given patient vitals, a voice intake transcript, and a visual symptom description, \
-output ONLY a valid JSON object with no markdown fences and no extra text:
-{"subjective":"","objective":"","assessment":{"urgency":"High Risk|Moderate Risk|Low Risk","flags":[]},"plan":[]}
-urgency must be exactly one of: "High Risk", "Moderate Risk", or "Low Risk". Be concise and clinical."""
+    private const val SYSTEM_PROMPT = """You are a clinical documentation assistant. Given patient vitals, a voice intake transcript, and a visual symptom description, output ONLY a valid JSON object with no markdown fences and no extra text:
+{"subjective":"<what patient said, 1-2 sentences>","objective":"Heart Rate: <x> bpm\nAge/Sex: <x> / <x>\nVisual: <visual description>","assessment":{"urgency":"High Risk|Moderate Risk|Low Risk","narrative":"<1 sentence clinical summary>","flags":["<flag1>","<flag2>"]},"plan":["<step1>","<step2>"]}
+Rules: urgency must be exactly "High Risk", "Moderate Risk", or "Low Risk". Keep objective formatted with literal \n between each line. Be concise and clinical."""
 
     suspend fun generateSoapNote(
         heartRate: Int,
@@ -90,6 +88,7 @@ urgency must be exactly one of: "High Risk", "Moderate Risk", or "Low Risk". Be 
             objective = obj.getString("objective"),
             assessment = Assessment(
                 urgency = assessmentObj.getString("urgency"),
+                narrative = assessmentObj.optString("narrative", ""),
                 flags = flags,
             ),
             plan = plan,
