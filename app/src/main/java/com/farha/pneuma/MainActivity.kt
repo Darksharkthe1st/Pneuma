@@ -53,10 +53,13 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -95,12 +98,12 @@ private enum class DemoScreen(val step: Int, val title: String, val subtitle: St
     Soap(4, "Doctor SOAP Note", "Summary Card"),
 }
 
-private data class PatientInfo(
+data class PatientInfo(
     val age: String,
     val sex: String,
 )
 
-private data class TranscriptTurn(
+data class TranscriptTurn(
     val question: String,
     val answer: String,
 )
@@ -111,12 +114,12 @@ private data class AgentStep(
     val complete: Boolean,
 )
 
-private data class Assessment(
+data class Assessment(
     val urgency: String,
     val flags: List<String>,
 )
 
-private data class SoapNote(
+data class SoapNote(
     val subjective: String,
     val objective: String,
     val assessment: Assessment,
@@ -185,6 +188,26 @@ private fun TriageAidApp() {
     var currentScreen by remember { mutableStateOf(DemoScreen.Vitals) }
     var age by remember { mutableStateOf(state.patientInfo.age) }
     var sex by remember { mutableStateOf(state.patientInfo.sex) }
+    var soapNote by remember { mutableStateOf<SoapNote?>(null) }
+    var isLoadingSoap by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(currentScreen) {
+        if (currentScreen == DemoScreen.Soap && soapNote == null && !isLoadingSoap) {
+            isLoadingSoap = true
+            soapNote = try {
+                ClaudeService.generateSoapNote(
+                    heartRate = state.heartRate,
+                    patientInfo = PatientInfo(age = age, sex = sex),
+                    transcript = state.transcript,
+                    visualSymptom = state.visualSymptom,
+                )
+            } catch (e: Exception) {
+                state.soapNote
+            }
+            isLoadingSoap = false
+        }
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -245,7 +268,25 @@ private fun TriageAidApp() {
                             )
 
                             DemoScreen.Soap -> SoapScreen(
-                                soapNote = state.soapNote
+                                soapNote = soapNote,
+                                isLoading = isLoadingSoap,
+                                onRegenerate = {
+                                    coroutineScope.launch {
+                                        soapNote = null
+                                        isLoadingSoap = true
+                                        soapNote = try {
+                                            ClaudeService.generateSoapNote(
+                                                heartRate = state.heartRate,
+                                                patientInfo = PatientInfo(age = age, sex = sex),
+                                                transcript = state.transcript,
+                                                visualSymptom = state.visualSymptom,
+                                            )
+                                        } catch (e: Exception) {
+                                            state.soapNote
+                                        }
+                                        isLoadingSoap = false
+                                    }
+                                }
                             )
                         }
                     }
@@ -618,59 +659,112 @@ private fun ProcessingScreen(
 
 @Composable
 private fun SoapScreen(
-    soapNote: SoapNote,
+    soapNote: SoapNote?,
+    isLoading: Boolean,
+    onRegenerate: () -> Unit = {},
 ) {
     ScreenCard(
         eyebrow = "Screen 4",
-        title = "Final doctor handoff card",
-        supporting = "Everything here is structured for a fast clinical readout and an impressive end-state for your judges."
+        title = if (isLoading) "Generating clinical brief..." else "Doctor's SOAP Note",
+        supporting = "Claude analyzes vitals, transcript, and visual data to produce a structured clinical handoff."
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            UrgencyBanner(level = soapNote.assessment.urgency)
-            SoapSection(
-                label = "Subjective",
-                accent = AccentBlue,
-                content = soapNote.subjective
-            )
-            SoapSection(
-                label = "Objective",
-                accent = AccentGreen,
-                content = soapNote.objective
-            )
-            SoapSection(
-                label = "Assessment",
-                accent = SoftAmber,
-                content = soapNote.assessment.flags.joinToString(separator = " | ")
-            )
-            SoapPlanSection(plan = soapNote.plan)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp)
+        if (isLoading || soapNote == null) {
+            SoapLoadingContent()
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                UrgencyBanner(level = soapNote.assessment.urgency)
+                SoapSection(
+                    label = "Subjective",
+                    accent = AccentBlue,
+                    content = soapNote.subjective
+                )
+                SoapSection(
+                    label = "Objective",
+                    accent = AccentGreen,
+                    content = soapNote.objective
+                )
+                SoapSection(
+                    label = "Assessment",
+                    accent = SoftAmber,
+                    content = soapNote.assessment.flags.joinToString(separator = " · ")
+                )
+                SoapPlanSection(plan = soapNote.plan)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("Print")
-                }
-                OutlinedButton(
-                    onClick = { },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Text("Share")
-                }
-                Button(
-                    onClick = { },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
-                ) {
-                    Text("Hand-off", color = DeepBackground)
+                    OutlinedButton(
+                        onClick = onRegenerate,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Text("Regenerate")
+                    }
+                    OutlinedButton(
+                        onClick = { },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Text("Share")
+                    }
+                    Button(
+                        onClick = { },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                    ) {
+                        Text("Hand-off", color = DeepBackground)
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SoapLoadingContent() {
+    val transition = rememberInfiniteTransition(label = "soap_load")
+    val alpha by transition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 0.9f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse"
+    )
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .clip(CircleShape)
+                .background(AccentGreen.copy(alpha = alpha)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "AI",
+                style = MaterialTheme.typography.titleLarge,
+                color = DeepBackground
+            )
+        }
+        Text(
+            text = "Claude is building your SOAP note...",
+            style = MaterialTheme.typography.bodyLarge,
+            color = Color(0xFF91B2BB),
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text = "Analyzing vitals · transcript · visual symptoms",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color(0xFF567880),
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
@@ -951,9 +1045,23 @@ private fun StepRow(
 
 @Composable
 private fun UrgencyBanner(level: String) {
+    val isHigh = level.contains("high", ignoreCase = true)
+    val isMod = level.contains("moderate", ignoreCase = true) || level.contains("medium", ignoreCase = true)
+    val bgColor = when {
+        isHigh -> DangerRed
+        isMod -> SoftAmber
+        else -> AccentGreen
+    }
+    val subText = when {
+        isHigh -> "Immediate evaluation recommended"
+        isMod -> "Timely evaluation recommended"
+        else -> "Routine evaluation appropriate"
+    }
+    val textTint = if (isHigh || isMod) Color.White else DeepBackground
+
     Card(
         shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = DangerRed)
+        colors = CardDefaults.cardColors(containerColor = bgColor)
     ) {
         Column(
             modifier = Modifier
@@ -964,19 +1072,19 @@ private fun UrgencyBanner(level: String) {
             Text(
                 text = "Urgency Level",
                 style = MaterialTheme.typography.labelLarge,
-                color = Color(0xFFFFD7D5)
+                color = textTint.copy(alpha = 0.75f)
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = level,
                 style = MaterialTheme.typography.headlineSmall,
-                color = Color.White
+                color = textTint
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Immediate evaluation recommended",
+                text = subText,
                 style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFFFFE7E5)
+                color = textTint.copy(alpha = 0.75f)
             )
         }
     }
