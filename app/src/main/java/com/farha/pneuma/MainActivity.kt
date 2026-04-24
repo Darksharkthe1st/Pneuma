@@ -1,9 +1,13 @@
 package com.farha.pneuma
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -53,9 +57,12 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,9 +71,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.farha.pneuma.ui.theme.AccentBlue
 import com.farha.pneuma.ui.theme.AccentGreen
 import com.farha.pneuma.ui.theme.CardSurface
@@ -100,7 +110,7 @@ private data class PatientInfo(
     val sex: String,
 )
 
-private data class TranscriptTurn(
+data class TranscriptTurn(
     val question: String,
     val answer: String,
 )
@@ -182,9 +192,12 @@ private fun demoState(): DemoState {
 @Composable
 private fun TriageAidApp() {
     val state = remember { demoState() }
+    val intakeViewModel: IntakeViewModel = viewModel()
+    val intakeState = intakeViewModel.uiState
     var currentScreen by remember { mutableStateOf(DemoScreen.Vitals) }
     var age by remember { mutableStateOf(state.patientInfo.age) }
     var sex by remember { mutableStateOf(state.patientInfo.sex) }
+    val currentQuestion = intakeViewModel.currentQuestion
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -236,8 +249,27 @@ private fun TriageAidApp() {
                             )
 
                             DemoScreen.Intake -> IntakeScreen(
-                                transcript = state.transcript,
-                                visualSymptom = state.visualSymptom
+                                transcript = intakeState.turns,
+                                currentQuestion = currentQuestion,
+                                draftAnswer = intakeState.draftAnswer,
+                                voiceError = intakeState.voiceError,
+                                isListening = intakeState.isListening,
+                                isSpeaking = intakeState.isSpeaking,
+                                photoCaptured = intakeState.photoCaptured,
+                                visualSymptom = intakeState.visualSymptom,
+                                onDraftAnswerChange = intakeViewModel::onDraftAnswerChange,
+                                onStartListening = intakeViewModel::startListening,
+                                onStopListening = intakeViewModel::stopListening,
+                                onBeginQuestionPlayback = intakeViewModel::beginQuestionPlayback,
+                                onFinishQuestionPlayback = intakeViewModel::finishQuestionPlayback,
+                                onSpeechPartialResult = intakeViewModel::onSpeechPartialResult,
+                                onSpeechFinalResult = intakeViewModel::onSpeechFinalResult,
+                                onSpeechError = intakeViewModel::onSpeechError,
+                                onReplayQuestion = intakeViewModel::replayQuestion,
+                                onSubmitAnswer = intakeViewModel::submitTypedAnswer,
+                                onUseDemoAnswer = intakeViewModel::useDemoAnswer,
+                                onCapturePhoto = intakeViewModel::captureMockPhoto,
+                                onGenerateVisionSummary = intakeViewModel::generateMockVisionSummary
                             )
 
                             DemoScreen.Processing -> ProcessingScreen(
@@ -480,15 +512,167 @@ private fun VitalsScreen(
 @Composable
 private fun IntakeScreen(
     transcript: List<TranscriptTurn>,
+    currentQuestion: String?,
+    draftAnswer: String,
+    voiceError: String,
+    isListening: Boolean,
+    isSpeaking: Boolean,
+    photoCaptured: Boolean,
     visualSymptom: String,
+    onDraftAnswerChange: (String) -> Unit,
+    onStartListening: () -> Unit,
+    onStopListening: () -> Unit,
+    onBeginQuestionPlayback: () -> Unit,
+    onFinishQuestionPlayback: () -> Unit,
+    onSpeechPartialResult: (String) -> Unit,
+    onSpeechFinalResult: (String) -> Unit,
+    onSpeechError: (String) -> Unit,
+    onReplayQuestion: () -> Unit,
+    onSubmitAnswer: () -> Unit,
+    onUseDemoAnswer: () -> Unit,
+    onCapturePhoto: () -> Unit,
+    onGenerateVisionSummary: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val latestStartListening by rememberUpdatedState(onStartListening)
+    val latestStopListening by rememberUpdatedState(onStopListening)
+    val latestBeginQuestionPlayback by rememberUpdatedState(onBeginQuestionPlayback)
+    val latestFinishQuestionPlayback by rememberUpdatedState(onFinishQuestionPlayback)
+    val latestPartialResult by rememberUpdatedState(onSpeechPartialResult)
+    val latestFinalResult by rememberUpdatedState(onSpeechFinalResult)
+    val latestSpeechError by rememberUpdatedState(onSpeechError)
+    val speechRecognizerManager = remember(context) {
+        SpeechRecognizerManager(
+            context = context,
+            onListeningStateChanged = { listening ->
+                if (listening) latestStartListening() else latestStopListening()
+            },
+            onPartialResult = { latestPartialResult(it) },
+            onFinalResult = { latestFinalResult(it) },
+            onError = { latestSpeechError(it) }
+        )
+    }
+    val questionSpeaker = remember(context) {
+        QuestionSpeaker(
+            context = context,
+            onSpeechStart = { latestBeginQuestionPlayback() },
+            onSpeechDone = { latestFinishQuestionPlayback() },
+            onSpeechError = { latestSpeechError(it) }
+        )
+    }
+    var hasMicPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.CAMERA
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasMicPermission = granted
+    }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasCameraPermission = granted
+    }
+    DisposableEffect(speechRecognizerManager) {
+        onDispose {
+            speechRecognizerManager.destroy()
+        }
+    }
+    DisposableEffect(questionSpeaker) {
+        onDispose {
+            questionSpeaker.destroy()
+        }
+    }
+    val interviewComplete = currentQuestion == null
+
+    LaunchedEffect(currentQuestion, interviewComplete) {
+        if (!interviewComplete) {
+            questionSpeaker.speak(currentQuestion.orEmpty())
+        }
+    }
+
+    val statusText = when {
+        !hasMicPermission -> "Mic permission needed"
+        !hasCameraPermission && interviewComplete -> "Camera permission needed"
+        isSpeaking -> "Speaking"
+        isListening -> "Listening"
+        interviewComplete -> "Questions complete"
+        else -> "Awaiting answer"
+    }
+
     ScreenCard(
         eyebrow = "Screen 2",
         title = "AI nurse intake with voice and symptom vision",
-        supporting = "This is the demo centerpiece: question playback, patient response, then a symptom photo prompt with Gemini analysis."
+        supporting = "Questions now speak out loud with native Android voice, while typed fallback and mock photo flow keep the demo dependable."
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            StatusPill("ElevenLabs voice intro cached", AccentGreen)
+            StatusPill("Phase 5 voice playback enabled", AccentGreen)
+            if (!hasMicPermission || !hasCameraPermission) {
+                Card(
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF102C36)),
+                    border = BorderStroke(1.dp, SoftAmber.copy(alpha = 0.4f))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Permissions needed for the real intake flow",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White
+                        )
+                        Text(
+                            text = buildString {
+                                if (!hasMicPermission) {
+                                    append("Microphone access is required for voice intake. ")
+                                }
+                                if (!hasCameraPermission) {
+                                    append("Camera access is required for symptom photos.")
+                                }
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFFB8D1D7)
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            if (!hasMicPermission) {
+                                Button(
+                                    onClick = {
+                                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    },
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = SoftAmber)
+                                ) {
+                                    Text("Grant Mic", color = DeepBackground)
+                                }
+                            }
+                            if (!hasCameraPermission) {
+                                OutlinedButton(
+                                    onClick = {
+                                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                    },
+                                    shape = RoundedCornerShape(14.dp)
+                                ) {
+                                    Text("Grant Camera")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             transcript.forEach { turn ->
                 ChatBubble(
                     speaker = "AI Nurse",
@@ -500,6 +684,103 @@ private fun IntakeScreen(
                     message = turn.answer,
                     alignEnd = true
                 )
+            }
+            if (!interviewComplete) {
+                Card(
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFB))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Current question",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color(0xFF4D6B74)
+                        )
+                        Text(
+                            text = currentQuestion.orEmpty(),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color(0xFF16313A)
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    onReplayQuestion()
+                                    questionSpeaker.speak(currentQuestion.orEmpty())
+                                },
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Text("Replay")
+                            }
+                            Button(
+                                onClick = {
+                                    if (!hasMicPermission) {
+                                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    } else if (isListening) {
+                                        speechRecognizerManager.stopListening()
+                                    } else {
+                                        onStartListening()
+                                        speechRecognizerManager.startListening()
+                                    }
+                                },
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isListening) DangerRed else Color(0xFF0F4A55)
+                                )
+                            ) {
+                                Text(
+                                    if (!hasMicPermission) "Grant Mic"
+                                    else if (isListening) "Stop Mic"
+                                    else "Start Mic"
+                                )
+                            }
+                        }
+                        OutlinedTextField(
+                            value = draftAnswer,
+                            onValueChange = onDraftAnswerChange,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Type fallback answer") },
+                            placeholder = { Text("Chest pain in the middle of my chest...") },
+                            shape = RoundedCornerShape(18.dp)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = onUseDemoAnswer,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Text("Use Demo Answer")
+                            }
+                            Button(
+                                onClick = onSubmitAnswer,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(14.dp),
+                                enabled = draftAnswer.isNotBlank()
+                            ) {
+                                Text("Submit")
+                            }
+                        }
+                    }
+                }
+            }
+            if (voiceError.isNotBlank()) {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = DangerRed.copy(alpha = 0.18f)),
+                    border = BorderStroke(1.dp, DangerRed.copy(alpha = 0.45f))
+                ) {
+                    Text(
+                        text = voiceError,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White
+                    )
+                }
             }
             Card(
                 shape = RoundedCornerShape(24.dp),
@@ -519,17 +800,49 @@ private fun IntakeScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color(0xFF53727D)
                     )
-                    Button(
-                        onClick = { },
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF0F4A55)
-                        )
-                    ) {
-                        Text("Open Camera")
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(
+                            onClick = {
+                                if (hasCameraPermission) {
+                                    onCapturePhoto()
+                                } else {
+                                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                }
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF0F4A55)
+                            )
+                        ) {
+                            Text(
+                                if (!hasCameraPermission) "Grant Camera"
+                                else if (photoCaptured) "Retake Mock Photo"
+                                else "Capture Mock Photo"
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = onGenerateVisionSummary,
+                            enabled = photoCaptured && hasCameraPermission,
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Text("Analyze")
+                        }
                     }
                     Text(
-                        text = "Visual summary: $visualSymptom",
+                        text = if (photoCaptured) {
+                            "Mock symptom photo captured and ready for Gemini."
+                        } else {
+                            "No symptom photo captured yet."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF27434D)
+                    )
+                    Text(
+                        text = if (visualSymptom.isBlank()) {
+                            "Visual summary: waiting for analysis."
+                        } else {
+                            "Visual summary: $visualSymptom"
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color(0xFF27434D)
                     )
@@ -555,12 +868,28 @@ private fun IntakeScreen(
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Listening...",
+                        text = statusText,
                         style = MaterialTheme.typography.titleSmall,
                         color = Color.White
                     )
                     Text(
-                        text = "Keep Chrome fallback or typed input ready if STT misbehaves.",
+                        text = if (interviewComplete) {
+                            if (!hasCameraPermission) {
+                                "Voice questions are done. Grant camera access next so the symptom-photo step can work."
+                            } else {
+                                "Voice questions are done. Capture the symptom photo and generate the mock vision summary."
+                            }
+                        } else {
+                            if (!hasMicPermission) {
+                                "Grant mic access now so the real speech input phase has a clean path. Typed answers still work today."
+                            } else if (isListening) {
+                                "Speak your answer now. Partial speech will appear in the text field, and the final result auto-submits."
+                            } else if (isSpeaking) {
+                                "The nurse is reading the next question aloud using Android text-to-speech."
+                            } else {
+                                "Use the mic for live Android speech input, or fall back to typed answers and the demo-answer button."
+                            }
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFF8FB0B9)
                     )

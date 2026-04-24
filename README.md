@@ -32,6 +32,7 @@ Open the project in Android Studio, run the `app` configuration, and launch on a
 - Team ownership and handoff notes: [docs/TEAM_HANDOFF.md](C:/Users/farha/GITHUB/Pneuma2/docs/TEAM_HANDOFF.md)
 - API/state integration notes: [docs/API_INTEGRATION.md](C:/Users/farha/GITHUB/Pneuma2/docs/API_INTEGRATION.md)
 - Presage / SmartSpectra integration guide: [docs/PRESAGE_SMARTSPECTRA.md](C:/Users/farha/GITHUB/Pneuma2/docs/PRESAGE_SMARTSPECTRA.md)
+- Person 2 merge notes: [docs/PERSON2_MERGE_NOTES.md](C:/Users/farha/GITHUB/Pneuma2/docs/PERSON2_MERGE_NOTES.md)
 
 ## Current Architecture
 
