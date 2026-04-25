@@ -62,6 +62,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.livedata.observeAsState
@@ -73,6 +74,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -81,6 +83,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.farha.pneuma.ui.theme.AccentBlue
 import com.farha.pneuma.ui.theme.AccentGreen
+import com.farha.pneuma.ui.theme.AccentPurple
 import com.farha.pneuma.ui.theme.CardSurface
 import com.farha.pneuma.ui.theme.DangerRed
 import com.farha.pneuma.ui.theme.DeepBackground
@@ -90,6 +93,7 @@ import com.farha.pneuma.ui.theme.SubtleStroke
 import com.presagetech.smartspectra.SmartSpectraSdk
 import com.presagetech.smartspectra.SmartSpectraMode
 import com.presagetech.smartspectra.SmartSpectraView as SmartSpectraViewWidget
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -119,7 +123,7 @@ private enum class DemoScreen(val step: Int, val title: String, val subtitle: St
     Soap(4, "Doctor SOAP Note", "Summary Card"),
 }
 
-private data class PatientInfo(
+data class PatientInfo(
     val age: String,
     val sex: String,
 )
@@ -135,12 +139,13 @@ private data class AgentStep(
     val complete: Boolean,
 )
 
-private data class Assessment(
+data class Assessment(
     val urgency: String,
+    val narrative: String = "",
     val flags: List<String>,
 )
 
-private data class SoapNote(
+data class SoapNote(
     val subjective: String,
     val objective: String,
     val assessment: Assessment,
@@ -186,18 +191,19 @@ private fun demoState(): DemoState {
             AgentStep("Generating SOAP note", "Claude building final clinical brief", complete = false),
         ),
         soapNote = SoapNote(
-            subjective = "Chest pain radiating to the left arm for 2 hours, pain 8/10, with sweating and mild shortness of breath.",
-            objective = "Heart rate 112 bpm. Age 58. Sex male. Visual review shows mild facial pallor with no visible swelling or rash.",
+            subjective = "Patient reports chest pain in the center of the chest radiating to the left arm, started 2 hours ago. Pain rated 8/10. No prior cardiac history.",
+            objective = "Heart Rate: 112 bpm\nAge/Sex: 58 / Male\nVisual: Mild facial pallor, no visible rash or swelling.",
             assessment = Assessment(
                 urgency = "High Risk",
-                flags = listOf("Possible cardiac event", "Chest pain", "Tachycardia")
+                narrative = "High risk for acute coronary syndrome.",
+                flags = listOf("Possible Cardiac Event", "Chest Pain", "Tachycardia")
             ),
             plan = listOf(
                 "Obtain 12-lead ECG",
                 "Check troponin levels",
-                "Monitor vitals and pain",
-                "Consider aspirin if not contraindicated",
-                "Refer for urgent clinician evaluation",
+                "Monitor vital signs",
+                "Consider aspirin if no contraindications",
+                "Refer to ER / cardiology evaluation",
             )
         )
     )
@@ -214,9 +220,62 @@ private fun TriageAidApp() {
     var age by remember { mutableStateOf(state.patientInfo.age) }
     var sex by remember { mutableStateOf(state.patientInfo.sex) }
     val currentQuestion = intakeViewModel.currentQuestion
-    val agentSteps = remember(heartRate) {
+    var soapNote by remember { mutableStateOf(state.soapNote) }
+    var isUpdatingSoap by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+    val transcriptForSoap = if (intakeState.turns.isNotEmpty()) intakeState.turns else state.transcript
+    val visualSymptomForSoap = intakeState.visualSymptom.ifBlank { state.visualSymptom }
+    val agentSteps = remember(
+        heartRate,
+        transcriptForSoap,
+        visualSymptomForSoap,
+        isUpdatingSoap
+    ) {
         state.agentSteps.toMutableList().also {
             it[0] = it[0].copy(detail = "Heart rate $heartRate bpm")
+            it[1] = it[1].copy(
+                detail = "${transcriptForSoap.size} intake questions captured",
+                complete = transcriptForSoap.isNotEmpty()
+            )
+            it[2] = it[2].copy(
+                detail = if (visualSymptomForSoap.isBlank()) {
+                    "Visual summary pending"
+                } else {
+                    "Vision summary ready"
+                },
+                complete = visualSymptomForSoap.isNotBlank()
+            )
+            it[3] = it[3].copy(
+                detail = if (isUpdatingSoap) {
+                    "Mistral building final clinical brief"
+                } else {
+                    "SOAP note ready for review"
+                },
+                complete = !isUpdatingSoap
+            )
+        }
+    }
+    val regenerateSoap: () -> Unit = {
+        coroutineScope.launch {
+            isUpdatingSoap = true
+            val result = runCatching {
+                ClaudeService.generateSoapNote(
+                    heartRate = heartRate,
+                    patientInfo = PatientInfo(age = age, sex = sex),
+                    transcript = transcriptForSoap,
+                    visualSymptom = visualSymptomForSoap,
+                )
+            }.getOrNull()
+            if (result != null) {
+                soapNote = result
+            }
+            isUpdatingSoap = false
+        }
+    }
+
+    LaunchedEffect(currentScreen) {
+        if (currentScreen == DemoScreen.Soap && !isUpdatingSoap) {
+            regenerateSoap()
         }
     }
 
@@ -299,7 +358,9 @@ private fun TriageAidApp() {
                             )
 
                             DemoScreen.Soap -> SoapScreen(
-                                soapNote = state.soapNote
+                                soapNote = soapNote,
+                                isUpdating = isUpdatingSoap,
+                                onRegenerate = regenerateSoap
                             )
                         }
                     }
@@ -1006,47 +1067,131 @@ private fun ProcessingScreen(
 @Composable
 private fun SoapScreen(
     soapNote: SoapNote,
+    isUpdating: Boolean,
+    onRegenerate: () -> Unit,
 ) {
-    ScreenCard(
-        eyebrow = "Screen 4",
-        title = "Final doctor handoff card",
-        supporting = "Everything here is structured for a fast clinical readout and an impressive end-state for your judges."
+    Card(
+        modifier = Modifier.fillMaxSize(),
+        shape = RoundedCornerShape(32.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSurface),
+        border = BorderStroke(1.dp, SubtleStroke)
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            UrgencyBanner(level = soapNote.assessment.urgency)
-            SoapSection(
-                label = "Subjective",
-                accent = AccentBlue,
-                content = soapNote.subjective
-            )
-            SoapSection(
-                label = "Objective",
-                accent = AccentGreen,
-                content = soapNote.objective
-            )
-            SoapSection(
-                label = "Assessment",
-                accent = SoftAmber,
-                content = soapNote.assessment.flags.joinToString(separator = " | ")
-            )
-            SoapPlanSection(plan = soapNote.plan)
+        Column(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Spacer(modifier = Modifier.height(18.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Clinical Brief (SOAP)",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (isUpdating) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(AccentGreen.copy(alpha = 0.15f))
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "Updating with Mistral",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = AccentGreen
+                            )
+                        }
+                    }
+                }
+
+                UrgencyBanner(level = soapNote.assessment.urgency)
+
+                SoapSectionCard(letter = "S", label = "Subjective", accent = AccentBlue) {
+                    Text(
+                        text = soapNote.subjective,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFFCCE4EE)
+                    )
+                }
+
+                SoapSectionCard(letter = "O", label = "Objective", accent = AccentGreen) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        soapNote.objective
+                            .split("\n")
+                            .filter { it.isNotBlank() }
+                            .forEach { line ->
+                                Text(
+                                    text = "- $line",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color(0xFFCCE4EE)
+                                )
+                            }
+                    }
+                }
+
+                SoapSectionCard(letter = "A", label = "Assessment", accent = SoftAmber) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (soapNote.assessment.narrative.isNotBlank()) {
+                            Text(
+                                text = soapNote.assessment.narrative,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color(0xFFCCE4EE)
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            soapNote.assessment.flags.forEach { flag ->
+                                FlagChip(text = flag, color = SoftAmber)
+                            }
+                        }
+                    }
+                }
+
+                SoapSectionCard(letter = "P", label = "Plan", accent = AccentPurple) {
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        soapNote.plan.forEach { item ->
+                            Text(
+                                text = "- $item",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color(0xFFCCE4EE)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            HorizontalDivider(color = SubtleStroke)
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp, vertical = 14.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 OutlinedButton(
-                    onClick = { },
+                    onClick = onRegenerate,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(16.dp)
                 ) {
-                    Text("Print")
+                    Text("Regenerate", style = MaterialTheme.typography.labelLarge)
                 }
                 OutlinedButton(
                     onClick = { },
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(16.dp)
                 ) {
-                    Text("Share")
+                    Text("Share", style = MaterialTheme.typography.labelLarge)
                 }
                 Button(
                     onClick = { },
@@ -1054,7 +1199,11 @@ private fun SoapScreen(
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
                 ) {
-                    Text("Hand-off", color = DeepBackground)
+                    Text(
+                        text = "Hand-off",
+                        color = DeepBackground,
+                        style = MaterialTheme.typography.labelLarge
+                    )
                 }
             }
         }
@@ -1338,108 +1487,114 @@ private fun StepRow(
 
 @Composable
 private fun UrgencyBanner(level: String) {
+    val isHigh = level.contains("high", ignoreCase = true)
+    val isModerate = level.contains("moderate", ignoreCase = true) || level.contains("medium", ignoreCase = true)
+    val backgroundColor = when {
+        isHigh -> DangerRed
+        isModerate -> SoftAmber
+        else -> AccentGreen
+    }
+    val supportingText = when {
+        isHigh -> "Immediate evaluation recommended"
+        isModerate -> "Timely evaluation recommended"
+        else -> "Routine evaluation appropriate"
+    }
+    val textColor = if (isHigh || isModerate) Color.White else DeepBackground
+
     Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = DangerRed)
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = backgroundColor)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(18.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text(
-                text = "Urgency Level",
-                style = MaterialTheme.typography.labelLarge,
-                color = Color(0xFFFFD7D5)
+                text = "URGENCY LEVEL",
+                style = MaterialTheme.typography.labelMedium,
+                color = textColor.copy(alpha = 0.75f)
             )
-            Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = level,
                 style = MaterialTheme.typography.headlineSmall,
-                color = Color.White
+                fontWeight = FontWeight.Bold,
+                color = textColor
             )
-            Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Immediate evaluation recommended",
+                text = supportingText,
                 style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFFFFE7E5)
+                color = textColor.copy(alpha = 0.85f)
             )
         }
     }
 }
 
 @Composable
-private fun SoapSection(
+private fun SoapSectionCard(
+    letter: String,
     label: String,
     accent: Color,
-    content: String,
+    content: @Composable () -> Unit,
 ) {
     Card(
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFF7FAFB))
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0B2030)),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.28f))
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(14.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(32.dp)
+                    .size(36.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(accent.copy(alpha = 0.18f)),
+                    .background(accent),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = label.first().toString(),
-                    color = accent,
-                    style = MaterialTheme.typography.labelLarge
+                    text = letter,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = DeepBackground
                 )
             }
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 Text(
                     text = label.uppercase(),
                     style = MaterialTheme.typography.labelMedium,
                     color = accent
                 )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = content,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF1B353D)
-                )
+                content()
             }
         }
     }
 }
 
 @Composable
-private fun SoapPlanSection(plan: List<String>) {
-    Card(
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFF7FAFB))
+private fun FlagChip(text: String, color: Color) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(color.copy(alpha = 0.15f))
+            .border(1.dp, color.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
+            .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Text(
-                text = "PLAN",
-                style = MaterialTheme.typography.labelMedium,
-                color = SoftAmber
-            )
-            plan.forEach { item ->
-                Text(
-                    text = "- $item",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF1B353D)
-                )
-            }
-        }
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = color
+        )
     }
 }
 
