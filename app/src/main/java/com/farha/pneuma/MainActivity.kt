@@ -64,6 +64,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.livedata.observeAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -75,6 +76,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.farha.pneuma.ui.theme.AccentBlue
@@ -85,11 +87,23 @@ import com.farha.pneuma.ui.theme.DeepBackground
 import com.farha.pneuma.ui.theme.PneumaTheme
 import com.farha.pneuma.ui.theme.SoftAmber
 import com.farha.pneuma.ui.theme.SubtleStroke
+import com.presagetech.smartspectra.SmartSpectraSdk
+import com.presagetech.smartspectra.SmartSpectraMode
+import com.presagetech.smartspectra.SmartSpectraView as SmartSpectraViewWidget
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        SmartSpectraSdk.initialize(this)
+        SmartSpectraSdk.getInstance().apply {
+            setApiKey("1ou5w74PYJa95fyMrqD9D4OIPkVO69GN5WtL2Cse")
+            setSmartSpectraMode(SmartSpectraMode.CONTINUOUS)
+            setMeasurementDuration(30.0)
+            setCameraPosition(1)
+            setShowFps(false)
+            setRecordingDelay(3)
+        }
         setContent {
             PneumaTheme {
                 TriageAidApp()
@@ -195,9 +209,16 @@ private fun TriageAidApp() {
     val intakeViewModel: IntakeViewModel = viewModel()
     val intakeState = intakeViewModel.uiState
     var currentScreen by remember { mutableStateOf(DemoScreen.Vitals) }
+
+    var heartRate by remember { mutableStateOf(state.heartRate) }
     var age by remember { mutableStateOf(state.patientInfo.age) }
     var sex by remember { mutableStateOf(state.patientInfo.sex) }
     val currentQuestion = intakeViewModel.currentQuestion
+    val agentSteps = remember(heartRate) {
+        state.agentSteps.toMutableList().also {
+            it[0] = it[0].copy(detail = "Heart rate $heartRate bpm")
+        }
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -241,11 +262,12 @@ private fun TriageAidApp() {
                     ) {
                         when (screen) {
                             DemoScreen.Vitals -> VitalsScreen(
-                                heartRate = state.heartRate,
+                                heartRate = heartRate,
                                 age = age,
                                 sex = sex,
                                 onAgeChange = { age = it },
-                                onSexChange = { sex = it }
+                                onSexChange = { sex = it },
+                                onHeartRateChange = { heartRate = it }
                             )
 
                             DemoScreen.Intake -> IntakeScreen(
@@ -273,7 +295,7 @@ private fun TriageAidApp() {
                             )
 
                             DemoScreen.Processing -> ProcessingScreen(
-                                steps = state.agentSteps
+                                steps = agentSteps
                             )
 
                             DemoScreen.Soap -> SoapScreen(
@@ -383,7 +405,33 @@ private fun VitalsScreen(
     sex: String,
     onAgeChange: (String) -> Unit,
     onSexChange: (String) -> Unit,
+    onHeartRateChange: (Int) -> Unit = {},
 ) {
+    val context = LocalContext.current
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA)
+                == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { hasCameraPermission = it }
+
+    LaunchedEffect(Unit) {
+        if (!hasCameraPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
+    }
+
+    val metricsBuffer by SmartSpectraSdk.getInstance().metricsBuffer.observeAsState()
+    LaunchedEffect(metricsBuffer) {
+        metricsBuffer?.let { metrics ->
+            if (metrics.hasPulse()) {
+                val pulse = metrics.pulse.strict.value.toInt()
+                if (pulse > 0) onHeartRateChange(pulse)
+            }
+        }
+    }
+
     val transition = rememberInfiniteTransition(label = "scan")
     val scanOffset by transition.animateFloat(
         initialValue = 0.18f,
@@ -406,47 +454,57 @@ private fun VitalsScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color(0xFF95B7BF)
             )
-            BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .requiredHeight(280.dp)
-                    .clip(RoundedCornerShape(28.dp))
-                    .background(Color(0xFFF3F7F7))
-            ) {
-                val height = maxHeight
-                Box(
+            if (hasCameraPermission) {
+                AndroidView(
+                    factory = { ctx -> SmartSpectraViewWidget(ctx, null) },
                     modifier = Modifier
-                        .align(Alignment.Center)
-                        .size(198.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.linearGradient(
-                                colors = listOf(Color(0xFFE1E8EA), Color(0xFFB3C3C7))
-                            )
-                        ),
-                    contentAlignment = Alignment.Center
+                        .fillMaxWidth()
+                        .requiredHeight(280.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                )
+            } else {
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .requiredHeight(280.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(Color(0xFFF3F7F7))
                 ) {
+                    val height = maxHeight
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(198.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.linearGradient(
+                                    colors = listOf(Color(0xFFE1E8EA), Color(0xFFB3C3C7))
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Face",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = Color(0xFF294650)
+                        )
+                    }
+                    CornerFrame(modifier = Modifier.align(Alignment.Center))
+                    HorizontalDivider(
+                        modifier = Modifier
+                            .padding(top = height * scanOffset)
+                            .fillMaxWidth(),
+                        color = AccentGreen
+                    )
                     Text(
-                        text = "Face",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = Color(0xFF294650)
+                        text = "Camera permission required",
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 20.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF466671)
                     )
                 }
-                CornerFrame(modifier = Modifier.align(Alignment.Center))
-                HorizontalDivider(
-                    modifier = Modifier
-                        .padding(top = height * scanOffset)
-                        .fillMaxWidth(),
-                    color = AccentGreen
-                )
-                Text(
-                    text = "Scanning... please hold still",
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 20.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF466671)
-                )
             }
 
             Row(
