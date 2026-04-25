@@ -56,6 +56,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -73,6 +74,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -510,77 +512,125 @@ private fun VitalsScreen(
         supporting = "Use this as the Presage handoff surface. The UI already reserves space for heart rate, demographics, and scan feedback."
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            Text(
-                text = "Position face within the frame",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFF95B7BF)
-            )
-            if (hasCameraPermission) {
-                AndroidView(
-                    factory = { ctx -> SmartSpectraViewWidget(ctx, null) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .requiredHeight(280.dp)
-                        .clip(RoundedCornerShape(28.dp))
-                )
-            } else {
-                BoxWithConstraints(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .requiredHeight(280.dp)
-                        .clip(RoundedCornerShape(28.dp))
-                        .background(Color(0xFFF3F7F7))
+            Card(
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF102B35)),
+                border = BorderStroke(1.dp, SubtleStroke)
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    val height = maxHeight
-                    Box(
+                    Row(
                         modifier = Modifier
-                            .align(Alignment.Center)
-                            .size(198.dp)
-                            .clip(CircleShape)
-                            .background(
-                                Brush.linearGradient(
-                                    colors = listOf(Color(0xFFE1E8EA), Color(0xFFB3C3C7))
-                                )
-                            ),
-                        contentAlignment = Alignment.Center
+                            .fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Face",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = Color(0xFF294650)
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                text = "Camera scan",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.White
+                            )
+                            Text(
+                                text = if (hasCameraPermission) {
+                                    "Hold still while Presage reads pulse from the live camera feed."
+                                } else {
+                                    "Grant camera access to start the live vitals capture."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF9FBBC2)
+                            )
+                        }
+                        StatusPill(
+                            text = if (hasCameraPermission) "Live capture" else "Permission needed",
+                            accent = if (hasCameraPermission) AccentGreen else SoftAmber
                         )
                     }
-                    CornerFrame(modifier = Modifier.align(Alignment.Center))
-                    HorizontalDivider(
-                        modifier = Modifier
-                            .padding(top = height * scanOffset)
-                            .fillMaxWidth(),
-                        color = AccentGreen
-                    )
-                    Text(
-                        text = "Camera permission required",
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 20.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF466671)
-                    )
+
+                    if (hasCameraPermission) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .requiredHeight(248.dp)
+                                .clip(RoundedCornerShape(24.dp))
+                        ) {
+                            AndroidView(
+                                factory = { ctx -> SmartSpectraViewWidget(ctx, null) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .requiredHeight(308.dp)
+                                    .align(Alignment.TopCenter)
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .fillMaxWidth()
+                                    .height(42.dp)
+                                    .background(Color(0xFF102B35))
+                            )
+                        }
+                    } else {
+                        BoxWithConstraints(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .requiredHeight(280.dp)
+                                .clip(RoundedCornerShape(24.dp))
+                                .background(Color(0xFFF3F7F7))
+                        ) {
+                            val height = maxHeight
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .size(198.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        Brush.linearGradient(
+                                            colors = listOf(Color(0xFFE1E8EA), Color(0xFFB3C3C7))
+                                        )
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Face",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = Color(0xFF294650)
+                                )
+                            }
+                            CornerFrame(modifier = Modifier.align(Alignment.Center))
+                            HorizontalDivider(
+                                modifier = Modifier
+                                    .padding(top = height * scanOffset)
+                                    .fillMaxWidth(),
+                                color = AccentGreen
+                            )
+                            Text(
+                                text = "Camera permission required",
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(bottom = 20.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color(0xFF466671)
+                            )
+                        }
+                    }
                 }
             }
 
-            Row(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 MetricBadge(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     label = "Heart Rate",
                     value = "$heartRate",
                     suffix = "bpm",
                     accent = DangerRed
                 )
                 MetricBadge(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     label = "Signal",
                     value = "Good",
                     suffix = "Presage ready",
@@ -588,38 +638,67 @@ private fun VitalsScreen(
                 )
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF10242D)),
+                border = BorderStroke(1.dp, SubtleStroke)
             ) {
-                OutlinedTextField(
-                    value = age,
-                    onValueChange = onAgeChange,
-                    modifier = Modifier.weight(1f),
-                    label = { Text("Age") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(18.dp)
-                )
                 Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Text(
-                        text = "Sex",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color(0xFFB5D0D6)
+                        text = "Patient setup",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("Male", "Female").forEach { option ->
-                            FilterChip(
-                                selected = sex == option,
-                                onClick = { onSexChange(option) },
-                                label = { Text(option) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = AccentGreen,
-                                    selectedLabelColor = DeepBackground
-                                )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = age,
+                            onValueChange = onAgeChange,
+                            modifier = Modifier.weight(1f),
+                            label = { Text("Age") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(18.dp),
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color(0xFF15313B),
+                                unfocusedContainerColor = Color(0xFF15313B),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedLabelColor = AccentGreen,
+                                unfocusedLabelColor = Color(0xFF9FBBC2),
+                                cursorColor = AccentGreen,
+                                focusedIndicatorColor = AccentGreen,
+                                unfocusedIndicatorColor = SubtleStroke
                             )
+                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Sex",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = Color(0xFFB5D0D6)
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf("Male", "Female").forEach { option ->
+                                    FilterChip(
+                                        selected = sex == option,
+                                        onClick = { onSexChange(option) },
+                                        label = { Text(option) },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            containerColor = Color(0xFF15313B),
+                                            labelColor = Color(0xFFBFD5DB),
+                                            selectedContainerColor = AccentGreen,
+                                            selectedLabelColor = DeepBackground
+                                        )
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -807,7 +886,8 @@ private fun IntakeScreen(
             if (!interviewComplete) {
                 Card(
                     shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFB))
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF102B35)),
+                    border = BorderStroke(1.dp, SubtleStroke)
                 ) {
                     Column(
                         modifier = Modifier.padding(18.dp),
@@ -816,12 +896,12 @@ private fun IntakeScreen(
                         Text(
                             text = "Current question",
                             style = MaterialTheme.typography.labelLarge,
-                            color = Color(0xFF4D6B74)
+                            color = Color(0xFF8EB6C0)
                         )
                         Text(
                             text = currentQuestion.orEmpty(),
                             style = MaterialTheme.typography.titleMedium,
-                            color = Color(0xFF16313A)
+                            color = Color.White
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             OutlinedButton(
@@ -829,9 +909,10 @@ private fun IntakeScreen(
                                     onReplayQuestion()
                                     questionSpeaker.speak(currentQuestion.orEmpty())
                                 },
-                                shape = RoundedCornerShape(14.dp)
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.5f))
                             ) {
-                                Text("Replay")
+                                Text("Replay", color = AccentBlue)
                             }
                             Button(
                                 onClick = {
@@ -848,11 +929,12 @@ private fun IntakeScreen(
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = if (isListening) DangerRed else Color(0xFF0F4A55)
                                 )
-                            ) {
+                                ) {
                                 Text(
                                     if (!hasMicPermission) "Grant Mic"
                                     else if (isListening) "Stop Mic"
-                                    else "Start Mic"
+                                    else "Start Mic",
+                                    color = Color.White
                                 )
                             }
                         }
@@ -862,7 +944,20 @@ private fun IntakeScreen(
                             modifier = Modifier.fillMaxWidth(),
                             label = { Text("Type fallback answer") },
                             placeholder = { Text("Chest pain in the middle of my chest...") },
-                            shape = RoundedCornerShape(18.dp)
+                            shape = RoundedCornerShape(18.dp),
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color(0xFF15313B),
+                                unfocusedContainerColor = Color(0xFF15313B),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedLabelColor = AccentGreen,
+                                unfocusedLabelColor = Color(0xFF8EB6C0),
+                                focusedPlaceholderColor = Color(0xFF6F99A3),
+                                unfocusedPlaceholderColor = Color(0xFF6F99A3),
+                                cursorColor = AccentGreen,
+                                focusedIndicatorColor = AccentGreen,
+                                unfocusedIndicatorColor = SubtleStroke
+                            )
                         )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -871,9 +966,10 @@ private fun IntakeScreen(
                             OutlinedButton(
                                 onClick = onUseDemoAnswer,
                                 modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(14.dp)
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(1.dp, SoftAmber.copy(alpha = 0.5f))
                             ) {
-                                Text("Use Demo Answer")
+                                Text("Use Demo Answer", color = SoftAmber)
                             }
                             Button(
                                 onClick = onSubmitAnswer,
@@ -903,7 +999,8 @@ private fun IntakeScreen(
             }
             Card(
                 shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F8F9))
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF10242D)),
+                border = BorderStroke(1.dp, SubtleStroke)
             ) {
                 Column(
                     modifier = Modifier.padding(18.dp),
@@ -912,12 +1009,12 @@ private fun IntakeScreen(
                     Text(
                         text = "Show us the affected area",
                         style = MaterialTheme.typography.titleMedium,
-                        color = Color(0xFF16313A)
+                        color = Color.White
                     )
                     Text(
                         text = "Capture a symptom photo for Gemini Vision analysis.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF53727D)
+                        color = Color(0xFF9FBBC2)
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Button(
@@ -942,9 +1039,10 @@ private fun IntakeScreen(
                         OutlinedButton(
                             onClick = onGenerateVisionSummary,
                             enabled = photoCaptured && hasCameraPermission,
-                            shape = RoundedCornerShape(16.dp)
+                            shape = RoundedCornerShape(16.dp),
+                            border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.5f))
                         ) {
-                            Text("Analyze")
+                            Text("Analyze", color = AccentBlue)
                         }
                     }
                     Text(
@@ -954,7 +1052,7 @@ private fun IntakeScreen(
                             "No symptom photo captured yet."
                         },
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF27434D)
+                        color = Color(0xFFD5E6EA)
                     )
                     Text(
                         text = if (visualSymptom.isBlank()) {
@@ -963,7 +1061,7 @@ private fun IntakeScreen(
                             "Visual summary: $visualSymptom"
                         },
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF27434D)
+                        color = Color(0xFFD5E6EA)
                     )
                 }
             }
@@ -1262,7 +1360,8 @@ private fun MetricBadge(
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFF6F7F8))
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF10242D)),
+        border = BorderStroke(1.dp, SubtleStroke)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp),
@@ -1286,19 +1385,19 @@ private fun MetricBadge(
                 Text(
                     text = label,
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF637E86)
+                    color = Color(0xFF8FB0B9)
                 )
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(
                         text = value,
                         style = MaterialTheme.typography.headlineSmall,
-                        color = Color(0xFF162F36)
+                        color = Color.White
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = suffix,
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF637E86)
+                        color = Color(0xFF8FB0B9)
                     )
                 }
             }
